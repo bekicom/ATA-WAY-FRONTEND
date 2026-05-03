@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { formatGroupedNumberInput, formatPercentInput, parseGroupedNumberInput, parsePercentInput } from "../../utils/format";
+import { buildVariantRows, formatGroupedNumberInput, formatPercentInput, parseGroupedNumberInput, parsePercentInput } from "../../utils/format";
 import { ModalShell } from "../modal/ModalShell";
 import { normalizeUnit } from "../../utils/format";
 
@@ -42,6 +42,29 @@ function calculateMarkupPercentFromPrices(purchasePriceInput, retailPriceInput) 
   return formatPercentInput(String(Math.round(percent * 100) / 100));
 }
 
+function buildRestockVariantRows(product) {
+  const existingVariants = Array.isArray(product?.variantStocks) ? product.variantStocks : [];
+  const sizeOptions = Array.isArray(product?.sizeOptions) ? product.sizeOptions.filter(Boolean) : [];
+  const colorOptions = Array.isArray(product?.colorOptions) ? product.colorOptions.filter(Boolean) : [];
+  const blueprint = buildVariantRows(sizeOptions, colorOptions);
+  const byKey = new Map();
+
+  for (const item of [...blueprint, ...existingVariants]) {
+    const size = String(item?.size || "").trim();
+    const color = String(item?.color || "").trim();
+    if (!size) continue;
+    byKey.set(`${size}__${color}`, { size, color, quantity: "" });
+  }
+
+  return [...byKey.values()];
+}
+
+function normalizeQuantityInput(value) {
+  const raw = String(value || "").replace(",", ".");
+  if (raw === "") return "";
+  return /^\d*\.?\d*$/.test(raw) ? raw : null;
+}
+
 export function RestockModal({ open, product, suppliers, onClose, onSubmit, loading }) {
   const [form, setForm] = useState(baseState);
   const priceSyncReadyRef = useRef(false);
@@ -67,11 +90,7 @@ export function RestockModal({ open, product, suppliers, onClose, onSubmit, load
       paidAmount: "",
       pricingMode: "keep_old",
       note: "",
-      variantStocks: (product.variantStocks || []).map((item) => ({
-        size: item.size,
-        color: item.color || "",
-        quantity: "",
-      })),
+      variantStocks: buildRestockVariantRows(product),
     });
 
     const timer = window.setTimeout(() => {
@@ -102,7 +121,9 @@ export function RestockModal({ open, product, suppliers, onClose, onSubmit, load
             piecePrice: parseGroupedNumberInput(form.piecePrice),
             paidAmount: parseGroupedNumberInput(form.paidAmount),
             wholesalePrice: parseGroupedNumberInput(form.retailPrice),
-            quantity: Number(form.quantity),
+            quantity: isVariantUnit
+              ? form.variantStocks.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+              : Number(form.quantity),
             variantStocks: form.variantStocks.filter((item) => Number(item.quantity || 0) > 0),
           });
         }}
@@ -198,23 +219,26 @@ export function RestockModal({ open, product, suppliers, onClose, onSubmit, load
                 <label key={`${item.size}-${item.color || "none"}`}>
                   <span>{item.size}{item.color ? ` / ${item.color}` : ""}</span>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     min="0"
-                    step="1"
                     value={item.quantity}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const nextQuantity = normalizeQuantityInput(event.target.value);
+                      if (nextQuantity === null) return;
                       setForm((prev) => ({
                         ...prev,
                         variantStocks: prev.variantStocks.map((variant, variantIndex) =>
                           variantIndex === index
-                            ? { ...variant, quantity: event.target.value === "" ? "" : String(Number(event.target.value)) }
+                            ? { ...variant, quantity: nextQuantity }
                             : variant,
                         ),
-                      }))
-                    }
+                      }));
+                    }}
                   />
                 </label>
               ))}
+              {!form.variantStocks.length ? <p className="hint-text">Bu mahsulotda razmer yoki rang topilmadi</p> : null}
             </div>
           </div>
         ) : null}
